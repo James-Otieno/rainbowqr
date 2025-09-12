@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build)",
+      "Bash(dotnet run:*)",
+      "Read(//c/Users/Jaymoh/Documents/ave/Rainbow qr/**)",
+      "Bash(grep:*)",
+      "Bash(del TestProgram.cs)",
+      "Bash(del TestSAPConnection.cs)",
+      "Bash(dotnet build:*)",
+      "Read(//c/Users/Jaymoh/source/repos/SAPS4HANA.TIMSv11/SAPS4HANA.TIMS.Infrastructure/Services/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
