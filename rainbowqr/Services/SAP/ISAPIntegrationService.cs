@@ -6,5 +6,6 @@ namespace QRCodeRegenerator.Services.SAP
     {
         Task<bool> UpdateDocumentInSAPAsync(TransactionRecord transaction, string qrCodePath, SAPSettings settings);
         Task<(bool IsConnected, string Message, string ResponseContent)> TestConnectionAsync(SAPSettings settings);
+        Task<bool> DeleteDocumentFromSAP(string docNum, SAPSettings settings);
     }
 }

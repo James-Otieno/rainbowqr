@@ -8,7 +8,12 @@
       "Bash(del TestProgram.cs)",
       "Bash(del TestSAPConnection.cs)",
       "Bash(dotnet build:*)",
-      "Read(//c/Users/Jaymoh/source/repos/SAPS4HANA.TIMSv11/SAPS4HANA.TIMS.Infrastructure/Services/**)"
+      "Read(//c/Users/Jaymoh/source/repos/SAPS4HANA.TIMSv11/SAPS4HANA.TIMS.Infrastructure/Services/**)",
+      "Read(//c/Users/Jaymoh/source/repos/SAPS4HANA.TIMSv11/SAPS4HANA.TIMS.Service/Workers/**)",
+      "Read(//c/Users/Jaymoh/Pictures/Screenshots/tool/**)",
+      "Read(//c/Users/Jaymoh/Pictures/Screenshots/**)",
+      "Bash(dir:*)",
+      "Bash(taskkill:*)"
     ],
     "deny": [],
     "ask": []

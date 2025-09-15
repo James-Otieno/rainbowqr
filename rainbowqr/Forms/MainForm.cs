@@ -124,8 +124,8 @@ namespace QRCodeRegenerator.Forms
             lblSubtitle.AutoSize = true;
 
             btnConfiguration.Text = "⚙️ SAP Configuration";
-            btnConfiguration.Size = new Size(160, 40);
-            btnConfiguration.Location = new Point(panel.Width - 180, 15);
+            btnConfiguration.Size = new Size(180, 40);
+            btnConfiguration.Location = new Point(panel.Width - 390, 15);
             btnConfiguration.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnConfiguration.BackColor = Color.FromArgb(59, 130, 246);
             btnConfiguration.ForeColor = Color.White;
@@ -134,7 +134,23 @@ namespace QRCodeRegenerator.Forms
             btnConfiguration.FlatAppearance.BorderSize = 0;
             btnConfiguration.Cursor = Cursors.Hand;
 
-            panel.Controls.AddRange(new Control[] { lblTitle, lblSubtitle, btnConfiguration });
+            // Add SAP Delete Test button
+            var btnSAPDeleteTest = new Button
+            {
+                Text = "🗑️ Delete Test",
+                Size = new Size(180, 40),
+                Location = new Point(panel.Width - 200, 15),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                BackColor = Color.FromArgb(220, 53, 69),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnSAPDeleteTest.FlatAppearance.BorderSize = 0;
+            btnSAPDeleteTest.Click += BtnSAPDeleteTest_Click;
+
+            panel.Controls.AddRange(new Control[] { lblTitle, lblSubtitle, btnConfiguration, btnSAPDeleteTest });
             return panel;
         }
 
@@ -414,6 +430,22 @@ namespace QRCodeRegenerator.Forms
             {
                 LogMessage($"Error opening configuration: {ex.Message}");
                 MessageBox.Show($"Error opening configuration: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void BtnSAPDeleteTest_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                var deleteTestLogger = Program.ServiceProvider?.GetService<ILogger<SAPDeleteTestForm>>();
+                using var deleteTestForm = new SAPDeleteTestForm(_configService, deleteTestLogger ?? Program.ServiceProvider?.GetService<ILoggerFactory>()?.CreateLogger<SAPDeleteTestForm>());
+                deleteTestForm.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error opening SAP Delete Test form: {ex.Message}");
+                _logger.LogError(ex, "Error opening SAP Delete Test form");
+                MessageBox.Show($"Error opening SAP Delete Test form: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

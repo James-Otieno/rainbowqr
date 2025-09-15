@@ -61,6 +61,7 @@ namespace QRCodeRegenerator
                     services.AddTransient<MainForm>();
                     services.AddTransient<ConfigurationForm>();
                     services.AddTransient<RecordSelectionForm>();
+                    services.AddTransient<SAPDeleteTestForm>();
 
                     // Logging
                     services.AddLogging(builder =>

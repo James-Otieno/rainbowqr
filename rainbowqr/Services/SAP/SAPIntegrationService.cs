@@ -123,6 +123,46 @@ namespace QRCodeRegenerator.Services.SAP
                         _logger.LogWarning("SAP returned non-success type: {Type} for document {DocNum}", sapResponse?.TYPE, transaction.TsNum);
                     }
                 }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+                {
+                    _logger.LogWarning("Document {DocNum} already exists in SAP fiscalization table - attempting delete and retry", transaction.TsNum);
+                    
+                    // Try to delete the existing record first
+                    var deleteSuccess = await DeleteDocumentFromSAP(transaction.TsNum, settings);
+                    if (deleteSuccess)
+                    {
+                        _logger.LogInformation("Successfully deleted existing record for document {DocNum}, retrying update", transaction.TsNum);
+                        
+                        // Create new request for retry (original request was already sent)
+                        var retryRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+                        retryRequest.Headers.Authorization = new AuthenticationHeaderValue("Basic", authBase64);
+                        
+                        var retryResponse = await _httpClient.SendAsync(retryRequest);
+                        var retryContent = await retryResponse.Content.ReadAsStringAsync();
+                        
+                        if (retryResponse.IsSuccessStatusCode)
+                        {
+                            var retrySapResponse = JsonSerializer.Deserialize<SAPResponse>(retryContent);
+                            if (retrySapResponse?.TYPE == "S")
+                            {
+                                _logger.LogInformation("Successfully updated document {DocNum} in SAP after delete-retry", transaction.TsNum);
+                                return true;
+                            }
+                            else
+                            {
+                                _logger.LogError("Retry failed - SAP returned non-success type: {Type} for document {DocNum}", retrySapResponse?.TYPE, transaction.TsNum);
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogError("Retry failed with status: {Status}, Content: {Content}", retryResponse.StatusCode, retryContent);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogError("Failed to delete existing record for document {DocNum}, cannot retry update", transaction.TsNum);
+                    }
+                }
                 else
                 {
                     _logger.LogError("SAP request failed with status: {Status}, Content: {Content}", response.StatusCode, responseContent);
@@ -133,6 +173,147 @@ namespace QRCodeRegenerator.Services.SAP
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to update document {DocNum} in SAP", transaction.TsNum);
+                return false;
+            }
+        }
+
+        public async Task<bool> DeleteDocumentFromSAP(string docNum, SAPSettings settings)
+        {
+            try
+            {
+                var url = $"{settings.BaseUrl}{settings.DocumentsEndpoint}?sap-client={settings.SapClient}";
+
+                _logger.LogInformation("=== SAP DELETE API REQUEST START ===");
+                _logger.LogInformation("Deleting document from S4HANA: {DocNum}", docNum);
+                _logger.LogInformation("Target URL: {Url}", url);
+
+                var request = new HttpRequestMessage(HttpMethod.Delete, url);
+
+                var payload = new { vbeln = docNum };
+                var json = JsonSerializer.Serialize(payload, _jsonOptions);
+                
+                _logger.LogInformation("=== RAW REQUEST DETAILS ===");
+                _logger.LogInformation("HTTP Method: {Method}", request.Method);
+                _logger.LogInformation("Request URI: {Uri}", request.RequestUri);
+                _logger.LogInformation("Request Payload (JSON): {Json}", json);
+
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                // Add Basic Authentication header
+                var authBytes = Encoding.ASCII.GetBytes($"{settings.Username}:{settings.Password}");
+                var authBase64 = Convert.ToBase64String(authBytes);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", authBase64);
+
+                // Add required headers following proven pattern
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.Add("Connection", "keep-alive");
+                request.Headers.Add("Cache-Control", "no-cache");
+
+                // Log all request headers
+                _logger.LogInformation("=== RAW REQUEST HEADERS ===");
+                foreach (var header in request.Headers)
+                {
+                    var headerValue = header.Key == "Authorization" ? "Basic [REDACTED]" : string.Join(", ", header.Value);
+                    _logger.LogInformation("Header: {Key} = {Value}", header.Key, headerValue);
+                }
+                if (request.Content?.Headers != null)
+                {
+                    foreach (var header in request.Content.Headers)
+                    {
+                        _logger.LogInformation("Content-Header: {Key} = {Value}", header.Key, string.Join(", ", header.Value));
+                    }
+                }
+
+                // Clear default headers before sending (following proven pattern)
+                _httpClient.DefaultRequestHeaders.Clear();
+                
+                _logger.LogInformation("=== SENDING HTTP REQUEST ===");
+                var requestTimestamp = DateTime.Now;
+                _logger.LogInformation("Request sent at: {Timestamp}", requestTimestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+                
+                var response = await _httpClient.SendAsync(request);
+                
+                var responseTimestamp = DateTime.Now;
+                var elapsed = responseTimestamp - requestTimestamp;
+                _logger.LogInformation("Response received at: {Timestamp} (Elapsed: {Elapsed}ms)", responseTimestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"), elapsed.TotalMilliseconds);
+                
+                var content = await response.Content.ReadAsStringAsync();
+
+                _logger.LogInformation("=== RAW RESPONSE DETAILS ===");
+                _logger.LogInformation("HTTP Status Code: {StatusCode} ({StatusCodeNumber})", response.StatusCode, (int)response.StatusCode);
+                _logger.LogInformation("Reason Phrase: {ReasonPhrase}", response.ReasonPhrase ?? "N/A");
+                
+                // Log all response headers
+                _logger.LogInformation("=== RAW RESPONSE HEADERS ===");
+                foreach (var header in response.Headers)
+                {
+                    _logger.LogInformation("Response-Header: {Key} = {Value}", header.Key, string.Join(", ", header.Value));
+                }
+                if (response.Content?.Headers != null)
+                {
+                    foreach (var header in response.Content.Headers)
+                    {
+                        _logger.LogInformation("Content-Header: {Key} = {Value}", header.Key, string.Join(", ", header.Value));
+                    }
+                }
+                
+                _logger.LogInformation("=== RAW RESPONSE BODY ===");
+                _logger.LogInformation("Content Length: {Length} bytes", content?.Length ?? 0);
+                _logger.LogInformation("Raw Response Body: {Content}", string.IsNullOrEmpty(content) ? "[EMPTY]" : content);
+                _logger.LogInformation("=== SAP DELETE API REQUEST END ===");
+
+                // Check for successful status code
+                if (response.IsSuccessStatusCode)
+                {
+                    try
+                    {
+                        // Parse SAP response
+                        if (!string.IsNullOrWhiteSpace(content))
+                        {
+                            var sapResponse = JsonSerializer.Deserialize<SAPResponse>(content, _jsonOptions);
+
+                            // Check for SAP success type "S"
+                            if (sapResponse != null && sapResponse.TYPE?.Equals("S", StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                _logger.LogInformation("Successfully deleted document {DocNum} from SAP. Message: {Message}", docNum, sapResponse.MESSAGE);
+                                return true;
+                            }
+                            else if (sapResponse != null)
+                            {
+                                _logger.LogWarning("SAP returned non-success type for document {DocNum}. Type: {Type}, Message: {Message}", docNum, sapResponse.TYPE, sapResponse.MESSAGE);
+                            }
+                        }
+                        else
+                        {
+                            // For empty content, check sap-server header
+                            if (response.Headers.Contains("sap-server"))
+                            {
+                                _logger.LogInformation("Successfully deleted document {DocNum} from SAP (verified by sap-server header)", docNum);
+                                return true;
+                            }
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogError(ex, "JSON parsing error for document {DocNum} delete. Content: {Content}", docNum, content?.Substring(0, Math.Min(content.Length, 500)));
+                        if (response.Headers.Contains("sap-server"))
+                        {
+                            return true; // Consider it successful if we have the sap-server header
+                        }
+                    }
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    _logger.LogError("Authentication failed for document {DocNum} delete. Please check credentials.", docNum);
+                    return false;
+                }
+
+                _logger.LogWarning("SAP returned unexpected response for document {DocNum} delete. Status: {StatusCode}, Content: {Content}", docNum, response.StatusCode, content);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete document {DocNum} from SAP", docNum);
                 return false;
             }
         }
@@ -148,12 +329,17 @@ namespace QRCodeRegenerator.Services.SAP
                     return (false, message, string.Empty);
                 }
 
+                _logger.LogInformation("=== SAP TEST CONNECTION API REQUEST START ===");
                 _logger.LogInformation("Testing SAP S/4HANA connection to {BaseUrl} following proven DocumentService pattern", settings.BaseUrl);
                 
                 // Build URL with proper date parameters (following proven pattern)
                 var url = $"{settings.BaseUrl}{settings.DocumentsEndpoint}?sap-client={settings.SapClient}&fromdate={settings.FromDate}&todate={settings.ToDate}";
 
-                _logger.LogInformation("Request URL: {Url}", url);
+                _logger.LogInformation("=== RAW REQUEST DETAILS ===");
+                _logger.LogInformation("HTTP Method: GET");
+                _logger.LogInformation("Request URI: {Url}", url);
+                _logger.LogInformation("SAP Client: {SapClient}", settings.SapClient);
+                _logger.LogInformation("Date Range: {FromDate} to {ToDate}", settings.FromDate, settings.ToDate);
 
                 var request = new HttpRequestMessage(HttpMethod.Get, url);
                 
@@ -167,21 +353,54 @@ namespace QRCodeRegenerator.Services.SAP
                 request.Headers.Add("Connection", "keep-alive");
                 request.Headers.Add("Cache-Control", "no-cache");
 
+                // Log all request headers
+                _logger.LogInformation("=== RAW REQUEST HEADERS ===");
+                foreach (var header in request.Headers)
+                {
+                    var headerValue = header.Key == "Authorization" ? "Basic [REDACTED]" : string.Join(", ", header.Value);
+                    _logger.LogInformation("Header: {Key} = {Value}", header.Key, headerValue);
+                }
+
                 _logger.LogInformation("Sending SAP test request with proven headers pattern");
                 _logger.LogInformation("Authentication: {Username}/[PASSWORD_MASKED]", settings.Username);
 
                 // Clear default headers before sending (following proven pattern)
                 _httpClient.DefaultRequestHeaders.Clear();
 
+                _logger.LogInformation("=== SENDING HTTP REQUEST ===");
+                var requestTimestamp = DateTime.Now;
+                _logger.LogInformation("Request sent at: {Timestamp}", requestTimestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+
                 var response = await _httpClient.SendAsync(request);
+                
+                var responseTimestamp = DateTime.Now;
+                var elapsed = responseTimestamp - requestTimestamp;
+                _logger.LogInformation("Response received at: {Timestamp} (Elapsed: {Elapsed}ms)", responseTimestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"), elapsed.TotalMilliseconds);
+                
                 var responseContent = await response.Content.ReadAsStringAsync();
 
-                _logger.LogInformation("SAP Response Status: {StatusCode} ({ReasonPhrase})", response.StatusCode, response.ReasonPhrase);
-                _logger.LogInformation("Response Content Length: {Length} characters", responseContent?.Length ?? 0);
+                _logger.LogInformation("=== RAW RESPONSE DETAILS ===");
+                _logger.LogInformation("HTTP Status Code: {StatusCode} ({StatusCodeNumber})", response.StatusCode, (int)response.StatusCode);
+                _logger.LogInformation("Reason Phrase: {ReasonPhrase}", response.ReasonPhrase ?? "N/A");
                 
-                // Log response headers following proven pattern
-                var responseHeaders = string.Join(", ", response.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}"));
-                _logger.LogInformation("Response Headers: {Headers}", responseHeaders);
+                // Log all response headers
+                _logger.LogInformation("=== RAW RESPONSE HEADERS ===");
+                foreach (var header in response.Headers)
+                {
+                    _logger.LogInformation("Response-Header: {Key} = {Value}", header.Key, string.Join(", ", header.Value));
+                }
+                if (response.Content?.Headers != null)
+                {
+                    foreach (var header in response.Content.Headers)
+                    {
+                        _logger.LogInformation("Content-Header: {Key} = {Value}", header.Key, string.Join(", ", header.Value));
+                    }
+                }
+                
+                _logger.LogInformation("=== RAW RESPONSE BODY ===");
+                _logger.LogInformation("Content Length: {Length} bytes", responseContent?.Length ?? 0);
+                _logger.LogInformation("Raw Response Body: {Content}", string.IsNullOrEmpty(responseContent) ? "[EMPTY]" : responseContent);
+                _logger.LogInformation("=== SAP TEST CONNECTION API REQUEST END ===");
 
                 if (response.IsSuccessStatusCode)
                 {
